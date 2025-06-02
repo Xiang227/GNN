@@ -1,6 +1,6 @@
 # Quick Start
     # Installation of dependencies
-    pip install torch torch-geometric scikit-learn numpy
+    pip install torch torch-geometric scikit-learn numpy torch_cluster
     python rwgnn_pyg.py --dataset IMDB-BINARY
 
 

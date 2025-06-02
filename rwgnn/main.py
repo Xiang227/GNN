@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import optim
 
 from model import RW_NN
+from rwgnn_stop import RW_GNN as RW_NN  # Model Replaceable PyG Version
 from utils import load_data, generate_batches, accuracy, AverageMeter
 
 # Argument parser
