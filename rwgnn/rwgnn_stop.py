@@ -16,10 +16,10 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import MessagePassing, global_mean_pool, global_add_pool
 from torch_geometric.utils import add_self_loops, degree, to_dense_adj, to_undirected
 from torch_geometric import transforms as T
-from torch_cluster import random_walk  # 从torch_cluster导入random_walk
+from torch_cluster import random_walk  # Import random_walk from torch_cluster
 
 class ExplicitRandomWalkEncoder(nn.Module):
-    """显式随机游走编码器，生成随机游走路径并编码"""
+    """Explicit random walk encoder that generates and encodes random walk paths"""
     def __init__(self, input_dim, hidden_dim, walk_length, num_walks, device):
         super(ExplicitRandomWalkEncoder, self).__init__()
         self.input_dim = input_dim
@@ -28,122 +28,125 @@ class ExplicitRandomWalkEncoder(nn.Module):
         self.num_walks = num_walks
         self.device = device
         
-        # 特征转换层
+        # feature transformation layer
         self.feature_encoder = Linear(input_dim, hidden_dim)
         
-        # 路径编码层(GRU)
+        # Path Coding Layer (GRU)
         self.path_encoder = GRU(hidden_dim, hidden_dim, batch_first=True)
     
     def sample_random_walks(self, edge_index, batch, num_nodes):
-        """为每个图生成多条随机游走路径"""
+        """Generate multiple randomized wandering paths for each graph"""
         walks = []
-        walk_batch = []  # 记录每条路径所属的图
+        walk_batch = []  # Record the graph to which each path belongs
         batch_size = torch.max(batch).item() + 1
         
-        # 为每个图生成随机游走
+        # Generate random walks for each graph
         for graph_idx in range(batch_size):
-            # 获取当前图的节点索引
+            # Get the node index of the current graph
             graph_mask = (batch == graph_idx)
             graph_nodes = torch.nonzero(graph_mask).squeeze()
             
-            # 处理单节点情况
+            # Handling single-node situations
             if graph_nodes.dim() == 0:
                 graph_nodes = graph_nodes.unsqueeze(0)
                 
-            # 如果图只有一个节点，则跳过随机游走
+            # If the graph has only one node, skip the random wandering
             if graph_nodes.size(0) <= 1:
                 continue
                 
-            # 获取当前图的边索引
+            # Get the edge index of the current graph
             edge_mask = torch.isin(edge_index[0], graph_nodes) & \
                         torch.isin(edge_index[1], graph_nodes)
             
-            # 单个图的边索引
+            # Edge index of a single graph
             graph_edge_index = edge_index[:, edge_mask]
             
             if graph_edge_index.numel() == 0:
                 continue
                 
-            # 确保有向图转为无向图
+            # Ensure that directed graphs are converted to undirected graphs
             graph_edge_index = to_undirected(graph_edge_index)
             
-            # 准备随机游走的输入
+            # Preparing inputs for random wandering
             row, col = graph_edge_index
             
-            # 随机选择起始节点
+            # Random selection of starting nodes
             if self.num_walks >= graph_nodes.size(0):
-                # 如果要求的游走数量大于等于节点数，使用所有节点作为起点
+                # If the number of required wanderings is greater than or equal to the number of nodes,
+                # use all nodes as the starting point
                 start_nodes = graph_nodes
             else:
-                # 否则随机选择节点
+                # Otherwise randomly selected nodes
                 indices = torch.randperm(graph_nodes.size(0))[:self.num_walks]
                 start_nodes = graph_nodes[indices]
             
-            # 生成随机游走路径
+            # Generate randomized wandering paths
             for start_node in start_nodes:
                 try:
-                    # 将起始节点转换为张量并确保是长度为1的一维张量
+                    # Convert the start node to a tensor
+                    # and make sure it is a one-dimensional tensor of length 1
                     start = start_node.view(-1)
                     
-                    # 使用torch_cluster.random_walk生成路径
-                    # 返回值是[batch_size, walk_length]的张量
+                    # Generate paths using torch_cluster.random_walk
+                    # The return value is the tensor of [batch_size, walk_length].
                     walk = random_walk(row, col, start, walk_length=self.walk_length-1)[0]
                     
-                    # 确保路径长度正确
+                    # Make sure the path length is correct
                     if walk.size(0) < self.walk_length:
-                        # 如果路径太短，用最后一个节点填充
+                        # If the path is too short, fill it with the last node
                         last_node = walk[-1] if walk.size(0) > 0 else start_node
                         padding = torch.full((self.walk_length - walk.size(0),), 
                                            last_node.item(), 
                                            dtype=torch.long, device=self.device)
                         walk = torch.cat([walk, padding])
                     elif walk.size(0) > self.walk_length:
-                        # 如果路径太长，截断
+                        # If the path is too long, truncate
                         walk = walk[:self.walk_length]
                     
                     walks.append(walk)
-                    walk_batch.append(graph_idx)  # 记录该路径属于哪个图
+                    walk_batch.append(graph_idx)  # Record which graph the path belongs to
                 except Exception as e:
-                    print(f"随机游走出错: {e}")
-                    # 创建一个备用路径 - 只包含起始节点，其余填充相同的值
+                    print(f"Random walk gone wrong: {e}")
+                    # Creates an alternate path - contains only the start node,
+                    # the rest is populated with the same values
                     walk = torch.full((self.walk_length,), start_node.item(), 
                                      dtype=torch.long, device=self.device)
                     walks.append(walk)
-                    walk_batch.append(graph_idx)  # 记录该路径属于哪个图
+                    walk_batch.append(graph_idx)  # Record which graph the path belongs to
         
-        # 如果没有有效的随机游走，创建一个空的占位符
+        # If there are no valid random walks, create an empty placeholder
         if len(walks) == 0:
             return torch.zeros(1, self.walk_length, device=self.device, dtype=torch.long), torch.zeros(1, device=self.device, dtype=torch.long)
             
-        # 将所有游走路径堆叠为一个批次
+        # Stack all wandering paths into a single batch
         walk_tensor = torch.stack(walks)
         walk_batch = torch.tensor(walk_batch, device=self.device)
         return walk_tensor, walk_batch
     
     def forward(self, x, edge_index, batch):
-        # 生成随机游走路径
+        # Generate randomized wandering paths
         walks, walk_batch = self.sample_random_walks(edge_index, batch, x.size(0))
         
-        # 获取路径中节点的特征
+        # Get the features of the nodes in the path
         x_encoded = self.feature_encoder(x)
         
-        # 为每个游走路径创建特征序列
+        # Create a sequence of features for each wandering path
         batch_size = walks.size(0)
         seq_len = walks.size(1)
         walk_features = torch.zeros(batch_size, seq_len, self.hidden_dim, device=self.device)
         
-        # 收集每个路径节点的特征
+        # Collect features for each path node
         for i in range(batch_size):
             for j in range(seq_len):
-                node_idx = walks[i, j].item()  # 获取整数索引
-                if 0 <= node_idx < x.size(0):  # 确保索引有效
+                node_idx = walks[i, j].item()  # Get integer index
+                if 0 <= node_idx < x.size(0):  # Make sure the index is valid
                     walk_features[i, j] = x_encoded[node_idx]
         
-        # 使用GRU编码路径
+        # Using GRU encoded paths
         _, h_n = self.path_encoder(walk_features)
         path_encodings = h_n.squeeze(0)  # [batch_size, hidden_dim]
         
-        # 返回路径编码和批次信息，用于后续聚合
+        # Returns path code and batch information for subsequent aggregation
         return path_encodings, walk_batch
 
 class RW_GNN(torch.nn.Module):
@@ -159,33 +162,33 @@ class RW_GNN(torch.nn.Module):
         self.penultimate_dim = penultimate_dim
         self.num_classes = num_classes
         
-        # 随机游走编码器
+        # Random Walk Encoder
         self.walk_encoder = ExplicitRandomWalkEncoder(
             input_dim=input_dim,
             hidden_dim=hidden_dim,
-            walk_length=max_step + 1,  # +1 包括起始节点
-            num_walks=hidden_graphs,   # 每个图采样的随机游走数量
+            walk_length=max_step + 1,  # +1 including start node
+            num_walks=hidden_graphs,   # Number of random walks per graph sample
             device=device
         )
         
-        # 学习的隐藏图参数 - 用于与随机游走路径交互
+        # Learned hidden graph parameters - for interacting with randomized wandering paths
         self.adj_hidden = Parameter(torch.FloatTensor(hidden_graphs, 
                                     (size_hidden_graphs*(size_hidden_graphs-1))//2))
         self.features_hidden = Parameter(torch.FloatTensor(hidden_graphs, 
                                          size_hidden_graphs, hidden_dim))
         
-        # 批归一化层
+        # batch normalization layer
         self.bn = BatchNorm1d(hidden_dim)
         
-        # 输出层
+        # output layer
         self.fc1 = Linear(hidden_dim, penultimate_dim)
         self.fc2 = Linear(penultimate_dim, num_classes)
         
-        # 正则化层
+        # regularization layer
         self.dropout = nn.Dropout(p=dropout)
         self.relu = nn.ReLU()
         
-        # 初始化参数
+        # Initialization parameters
         self.init_weights()
     
     def init_weights(self):
@@ -195,44 +198,45 @@ class RW_GNN(torch.nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         
-        # 使用随机游走编码器获取路径编码和批次信息
+        # Getting path encoding
+        # and batch information using a randomized wandering encoder
         walk_encodings, walk_batch = self.walk_encoder(x, edge_index, batch)
         
-        # 计算每个图的唯一ID
+        # Compute a unique ID for each graph
         unique_batch_ids = torch.unique(batch)
         batch_size = unique_batch_ids.size(0)
         
-        # 为每个图聚合其所有随机游走路径的编码
+        # Aggregate for each graph the encoding of all its random wandering paths
         graph_encodings = torch.zeros(batch_size, walk_encodings.size(1), device=self.device)
         
-        # 对每个图，平均其所有随机游走路径的编码
+        # For each graph, average the coding of all its random wandering paths
         for i, graph_idx in enumerate(unique_batch_ids):
-            # 找到属于当前图的所有路径
+            # Find all paths belonging to the current diagram
             mask = (walk_batch == graph_idx)
-            if mask.sum() > 0:  # 确保有路径
-                # 计算平均编码
+            if mask.sum() > 0:  # Ensure pathways are available
+                # Calculation of the average code
                 graph_encodings[i] = walk_encodings[mask].mean(dim=0)
         
-        # 应用批归一化
+        # Apply batch normalization
         graph_encodings = self.bn(graph_encodings)
         
-        # 下游网络处理
+        # Downstream network processing
         out = self.relu(self.fc1(graph_encodings))
         out = self.dropout(out)
         out = self.fc2(out)
         
         return F.log_softmax(out, dim=1)
 
-# 早停类实现
+# Early Stop Class Implementation
 class EarlyStopping:
-    """早停机制，用于防止过拟合"""
+    """Early stop mechanism to prevent overfitting"""
     def __init__(self, patience=10, verbose=True, delta=0, path='checkpoint.pt'):
         """
-        参数:
-            patience (int): 验证集性能不再提升后等待的轮数
-            verbose (bool): 是否打印早停信息
-            delta (float): 判断性能提升的最小变化阈值
-            path (str): 保存最佳模型的路径
+        Parameters.
+            patience (int): the number of rounds to wait after the validation set is no longer performing well
+            verbose (bool): Whether to print an early stop message.
+            delta (float): the minimum change threshold for determining performance improvement
+            path (str): the path to save the best model
         """
         self.patience = patience
         self.verbose = verbose
@@ -245,11 +249,11 @@ class EarlyStopping:
     
     def __call__(self, val_loss, model):
         """
-        判断是否需要早停
-        
-        参数:
-            val_loss (float): 验证集损失
-            model (torch.nn.Module): 模型
+        Determine if an early stop is required
+
+        Parameters.
+            val_loss (float): validation set loss
+            model (torch.nn.Module): model
         """
         score = -val_loss
         
@@ -259,7 +263,7 @@ class EarlyStopping:
         elif score < self.best_score + self.delta:
             self.counter += 1
             if self.verbose:
-                print(f'早停计数器: {self.counter}/{self.patience}')
+                print(f'Early Stop Counter: {self.counter}/{self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
@@ -268,13 +272,13 @@ class EarlyStopping:
             self.counter = 0
     
     def save_checkpoint(self, val_loss, model):
-        """保存模型"""
+        """Save Model"""
         if self.verbose:
-            print(f'验证损失减少 ({self.val_loss_min:.6f} --> {val_loss:.6f})，保存模型...')
+            print(f'Verification Loss Reduction ({self.val_loss_min:.6f} --> {val_loss:.6f})，Save Model...')
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
 
-# 训练函数
+# training function
 def train(model, loader, optimizer, device):
     model.train()
     total_loss = 0
@@ -296,7 +300,7 @@ def train(model, loader, optimizer, device):
     
     return total_loss / total, correct / total
 
-# 测试函数
+# test function
 def test(model, loader, device):
     model.eval()
     total_loss = 0
@@ -317,7 +321,7 @@ def test(model, loader, device):
     return total_loss / total, correct / total
 
 def main():
-    # 参数设置
+    # parameterization
     parser = argparse.ArgumentParser(description='RW_GNN with PyTorch Geometric')
     parser.add_argument('--dataset', default='IMDB-BINARY', help='Dataset name')
     parser.add_argument('--use-node-labels', action='store_true', default=False, 
@@ -342,19 +346,19 @@ def main():
                         help='Directory to save model checkpoints')
     args = parser.parse_args()
     
-    # 设置随机种子
+    # Setting the random seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
     
-    # 创建检查点目录
+    # Creating a Checkpoint Catalog
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     
-    # 设置设备
+    # Setting up the device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # 加载数据集
+    # Load Dataset
     dataset = TUDataset(root='data', name=args.dataset, use_node_attr=args.use_node_labels)
     
     if dataset.num_node_features == 0:
@@ -367,26 +371,26 @@ def main():
         if max_degree < 1000:
             dataset.transform = T.OneHotDegree(max_degree)
     
-    # 10折交叉验证
+    # 10-fold cross validation
     kf = KFold(n_splits=10, shuffle=True, random_state=args.seed)
     accs = []
     
     for fold, (train_idx, test_idx) in enumerate(kf.split(range(len(dataset)))):
         print(f'Fold {fold+1}/10')
         
-        # 分割数据集
+        # Segmented data sets
         train_idx, val_idx = train_idx[:int(len(train_idx)*0.9)], train_idx[int(len(train_idx)*0.9):]
         
         train_dataset = dataset[train_idx.tolist()]
         val_dataset = dataset[val_idx.tolist()]
         test_dataset = dataset[test_idx.tolist()]
         
-        # 创建数据加载器
+        # Creating a Data Loader
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
         
-        # 创建模型
+        # Creating Models
         model = RW_GNN(
             input_dim=dataset.num_features,
             max_step=args.max_step,
@@ -400,13 +404,13 @@ def main():
             device=device
         ).to(device)
         
-        # 优化器和学习率调度器
+        # Optimizer and learning rate scheduler
         optimizer = Adam(model.parameters(), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-5
         )
         
-        # 初始化早停
+        # Initialize Early Stop
         checkpoint_path = os.path.join(args.checkpoint_dir, f'model_fold_{fold+1}.pt')
         early_stopping = EarlyStopping(
             patience=args.patience, 
@@ -414,7 +418,7 @@ def main():
             path=checkpoint_path
         )
         
-        # 训练模型
+        # training model
         print(f"{'Epoch':^7} | {'Train Loss':^12} | {'Train Acc':^10} | {'Val Loss':^10} | {'Val Acc':^9} | {'Time':^7}")
         print("-" * 65)
         
@@ -423,29 +427,29 @@ def main():
             train_loss, train_acc = train(model, train_loader, optimizer, device)
             val_loss, val_acc = test(model, val_loader, device)
             
-            # 更新学习率
+            # Updated learning rate
             scheduler.step(val_loss)
             
-            # 打印训练信息
+            # Print training information
             print(f"{epoch:^7} | {train_loss:^12.4f} | {train_acc:^10.4f} | {val_loss:^10.4f} | {val_acc:^9.4f} | {time.time() - start:^7.2f}")
             
-            # 早停检查
+            # Early stop check
             early_stopping(val_loss, model)
             if early_stopping.early_stop:
-                print(f"早停! 在第 {epoch} 轮停止训练")
+                print(f"Stop early! Stop training in the {epoch} round")
                 break
         
-        # 加载最佳模型
+        # Load the best model
         model.load_state_dict(torch.load(checkpoint_path))
         
-        # 测试最佳模型
+        # Testing the best models
         test_loss, test_acc = test(model, test_loader, device)
-        print(f"测试结果 - 损失: {test_loss:.4f}, 准确率: {test_acc:.4f}")
+        print(f"Test Results - Loss {test_loss:.4f}, Accuracy {test_acc:.4f}")
         accs.append(test_acc)
     
-    # 输出最终结果
-    print(f'平均测试准确率: {np.mean(accs):.4f} ± {np.std(accs):.4f}')
-    print(f'所有折的准确率: {accs}')
+    # Output the final result
+    print(f'Average test accuracy: {np.mean(accs):.4f} ± {np.std(accs):.4f}')
+    print(f'Accuracy of all folds: {accs}')
 
 if __name__ == '__main__':
     main() 
