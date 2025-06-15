@@ -1,0 +1,47 @@
+rwgnn_dis_bias2.py — PyTorch-Geometric Distance-Biased Random-Walk GNN
+====================================================================
+
+Overview
+--------
+This script implements a Graph Neural Network that encodes distance-biased random walks using PyTorch-Geometric.
+Starting from raw graph data (TUDatasets or Planetoid/Cora), it computes shortest-path distances,
+builds a transition matrix with exponential or Lévy-flight bias,
+samples fixed-length walks, encodes each walk with a GRU,
+and aggregates path embeddings for downstream classification.
+
+Key Features
+------------
+1. **Distance Matrix Construction**
+   - Exact BFS distances for small/medium graphs
+   - 1-hop/2-hop approximation for large graphs (>1000 nodes)
+
+2. **Distance-Biased Transition Probabilities**
+   - Exponential decay: 𝑓(d)=exp(−α·d)
+   - Lévy flight: 𝑓(d)=d^(−α) with self-loop handling
+   - Uniform “jump” factor c mixes global exploration
+
+3. **Random-Walk Sampling**
+   - Batch-wise or per-graph sampling of L-step walks
+   - Multinomial sampling from distance-based transition matrix
+
+4. **GRU-Based Path Encoder**
+   - Linear projection of node features → hidden_dim
+   - GRU processes each walk sequence; final hidden state is path embedding
+   - Aggregate all path embeddings per graph (or per node) by averaging
+
+5. **Learnable Hidden-Graph Augmentation**
+   - Trainable “hidden” adjacency & feature tensors for latent structure
+   - Fuse explicit and latent information in downstream layers
+
+6. **Robust Training Pipeline**
+   - BatchNorm, double Dropout, learning-rate scheduler
+   - Early stopping, checkpoint saving
+   - Automatic plotting of train/val loss & accuracy curves
+
+Usage
+-----
+```bash
+
+python rwgnn_dis_bias2.py --dataset IMDB-BINARY --alpha 1.0
+or
+python rwgnn_dis_bias2 --dataset Cora --alpha 1.0 --epochs 50
