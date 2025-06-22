@@ -44,4 +44,4 @@ Usage
 
 python rwgnn_dis_bias2.py --dataset IMDB-BINARY --alpha 1.0
 or
-python rwgnn_dis_bias2 --dataset Cora --alpha 1.0 --epochs 50
+python rwgnn_dis_bias2.py --dataset Cora --alpha 1.0 --epochs 50
