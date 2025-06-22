@@ -339,7 +339,7 @@ class ExplicitRandomWalkEncoder(nn.Module):
         return walk_tensor, walk_batch
     
     def forward(self, x, edge_index, batch):
-        # 生成随机游走路径（用于图分类）
+        # Generate randomised wandering paths (for graph classification)
         walks, walk_batch = self.sample_random_walks_for_graph_classification(edge_index, batch, x.size(0))
         
         # Get the features of the nodes in the path
