@@ -1,0 +1,1 @@
+bash yml/run.sh tune.py 2 --num_trials 500 --gpu_per_trial 0.125 --data_dir /mnt/ceph/RWGNN/data --log_dir /mnt/ceph/RWGNN/logs --use_local_storage
